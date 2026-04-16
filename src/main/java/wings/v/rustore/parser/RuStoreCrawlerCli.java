@@ -28,6 +28,9 @@ public final class RuStoreCrawlerCli {
         if (options.verbose()) {
             configBuilder.logger(message -> System.err.println("[librustoreparser] " + message));
         }
+        if (options.progress() || options.verbose()) {
+            configBuilder.progressLogger(message -> System.err.println("[librustoreparser] " + message));
+        }
         if (!options.seedDeveloperIds().isEmpty()) {
             configBuilder.seedDeveloperIds(options.seedDeveloperIds());
         }
@@ -73,6 +76,7 @@ public final class RuStoreCrawlerCli {
         System.out.println();
         System.out.println("Options:");
         System.out.println("  --help                         Show this help and exit.");
+        System.out.println("  --progress                     Print concise crawl progress to stderr.");
         System.out.println("  --verbose                      Print crawler progress to stderr.");
         System.out.println("  --full                         Print package, app name, developer name, developer path.");
         System.out.println("  --developer-pages=N            Max pages per developer. 0 = all. Default: 0.");
@@ -91,6 +95,7 @@ public final class RuStoreCrawlerCli {
 
     private record CliOptions(
             boolean help,
+            boolean progress,
             boolean verbose,
             boolean full,
             int maxDeveloperPages,
@@ -104,6 +109,7 @@ public final class RuStoreCrawlerCli {
     ) {
         private static CliOptions parse(String[] args) {
             boolean help = false;
+            boolean progress = false;
             boolean verbose = false;
             boolean full = false;
             int maxDeveloperPages = 0;
@@ -118,6 +124,8 @@ public final class RuStoreCrawlerCli {
             for (String arg : args) {
                 if ("--help".equals(arg) || "-h".equals(arg)) {
                     help = true;
+                } else if ("--progress".equals(arg)) {
+                    progress = true;
                 } else if ("--verbose".equals(arg) || "-v".equals(arg)) {
                     verbose = true;
                 } else if ("--full".equals(arg)) {
@@ -145,6 +153,7 @@ public final class RuStoreCrawlerCli {
 
             return new CliOptions(
                     help,
+                    progress,
                     verbose,
                     full,
                     maxDeveloperPages,

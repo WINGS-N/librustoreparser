@@ -40,9 +40,11 @@ public final class RuStoreCrawler {
             developers = new ArrayList<>(developers.subList(0, config.getMaxSeedDevelopers()));
         }
         log("seed developers selected for crawling: " + developers.size());
+        progress("seed developers: " + developers.size());
 
         List<String> directPackages = collectDirectSeedPackages();
         log("direct packages configured: " + directPackages.size());
+        progress("direct packages: " + directPackages.size());
 
         List<AppInfo> apps = collectDeveloperApps(developers);
         if (apps.isEmpty()) {
@@ -105,8 +107,11 @@ public final class RuStoreCrawler {
             }
 
             Map<String, AppInfo> appsByPackage = new HashMap<>();
+            int completed = 0;
+            int failed = 0;
             for (int i = 0; i < developers.size(); i++) {
                 DeveloperCrawlResult result;
+                String currentDeveloper = "unknown";
                 try {
                     result = completionService.take().get();
                 } catch (InterruptedException exception) {
@@ -119,11 +124,26 @@ public final class RuStoreCrawler {
                         throw interruptedException;
                     }
                     log("skip developer crawl: " + (cause == null ? exception.getMessage() : cause.getMessage()));
+                    completed++;
+                    failed++;
+                    progress("developers " + completed + "/" + developers.size()
+                            + " | apps " + appsByPackage.size()
+                            + " | failed " + failed
+                            + " | current " + currentDeveloper);
                     continue;
                 }
 
+                if (result.seed() != null) {
+                    currentDeveloper = developerLabel(result.seed());
+                }
                 if (result.error() != null) {
                     log("skip developer crawl: " + result.error().getMessage());
+                    completed++;
+                    failed++;
+                    progress("developers " + completed + "/" + developers.size()
+                            + " | apps " + appsByPackage.size()
+                            + " | failed " + failed
+                            + " | current " + currentDeveloper);
                     continue;
                 }
 
@@ -131,6 +151,7 @@ public final class RuStoreCrawler {
                 MutableDeveloperSeed seed = result.seed();
                 if (seed != null && seed.name() == null && data.name() != null) {
                     seed.name(data.name());
+                    currentDeveloper = developerLabel(seed);
                 }
                 if (seed != null) {
                     log("seed developer: " + seed.id() + " | " + coalesce(seed.name(), seed.path()));
@@ -142,6 +163,11 @@ public final class RuStoreCrawler {
                         appsByPackage.put(app.getPackageName(), app);
                     }
                 }
+                completed++;
+                progress("developers " + completed + "/" + developers.size()
+                        + " | apps " + appsByPackage.size()
+                        + " | failed " + failed
+                        + " | current " + currentDeveloper);
             }
 
             return new ArrayList<>(appsByPackage.values());
@@ -313,9 +339,14 @@ public final class RuStoreCrawler {
         }
 
         apps.sort((left, right) -> {
-            String leftDeveloper = coalesce(left.getDeveloperName(), developersByPath.get(left.getDeveloperPath()), "");
-            String rightDeveloper =
-                    coalesce(right.getDeveloperName(), developersByPath.get(right.getDeveloperPath()), "");
+            String leftDeveloper = Objects.requireNonNullElse(
+                    coalesce(left.getDeveloperName(), developersByPath.get(left.getDeveloperPath())),
+                    ""
+            );
+            String rightDeveloper = Objects.requireNonNullElse(
+                    coalesce(right.getDeveloperName(), developersByPath.get(right.getDeveloperPath())),
+                    ""
+            );
             int developerCompare = leftDeveloper.compareTo(rightDeveloper);
             if (developerCompare != 0) {
                 return developerCompare;
@@ -376,6 +407,20 @@ public final class RuStoreCrawler {
         if (logger != null) {
             logger.log(message);
         }
+    }
+
+    private void progress(String message) {
+        RuStoreLogger progressLogger = config.getProgressLogger();
+        if (progressLogger != null) {
+            progressLogger.log(message);
+        }
+    }
+
+    private static String developerLabel(MutableDeveloperSeed seed) {
+        return Objects.requireNonNullElse(
+                coalesce(seed.name(), seed.id(), seed.path()),
+                "unknown"
+        );
     }
 
     private static String coalesce(String... values) {

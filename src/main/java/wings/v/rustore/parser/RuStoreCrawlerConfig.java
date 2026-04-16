@@ -19,6 +19,7 @@ public final class RuStoreCrawlerConfig {
     private final int maxAttempts;
     private final String userAgent;
     private final RuStoreLogger logger;
+    private final RuStoreLogger progressLogger;
 
     private RuStoreCrawlerConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
@@ -32,6 +33,7 @@ public final class RuStoreCrawlerConfig {
         this.maxAttempts = builder.maxAttempts;
         this.userAgent = builder.userAgent;
         this.logger = builder.logger;
+        this.progressLogger = builder.progressLogger;
     }
 
     public static Builder builder() {
@@ -82,6 +84,10 @@ public final class RuStoreCrawlerConfig {
         return logger;
     }
 
+    public RuStoreLogger getProgressLogger() {
+        return progressLogger;
+    }
+
     private static List<String> immutableCopy(Collection<String> values) {
         return Collections.unmodifiableList(new ArrayList<>(values));
     }
@@ -98,6 +104,7 @@ public final class RuStoreCrawlerConfig {
         private int maxAttempts = 5;
         private String userAgent = RuStoreDefaults.DEFAULT_USER_AGENT;
         private RuStoreLogger logger;
+        private RuStoreLogger progressLogger;
 
         private Builder() {
         }
@@ -166,6 +173,11 @@ public final class RuStoreCrawlerConfig {
 
         public Builder logger(RuStoreLogger logger) {
             this.logger = logger;
+            return this;
+        }
+
+        public Builder progressLogger(RuStoreLogger progressLogger) {
+            this.progressLogger = progressLogger;
             return this;
         }
 
