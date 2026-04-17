@@ -76,6 +76,15 @@ public final class RuStoreCrawlerCli {
         if (options.rerunFails()) {
             return runner.rerunFails(config, options.jsonOutputPath(), options.stateDirectory());
         }
+        if (!options.rerunDevelopers().isEmpty() || !options.rerunDirectPackages().isEmpty()) {
+            return runner.rerunSelected(
+                    config,
+                    options.jsonOutputPath(),
+                    options.stateDirectory(),
+                    options.rerunDevelopers(),
+                    options.rerunDirectPackages()
+            );
+        }
         return runner.runIncremental(config, options.jsonOutputPath(), options.stateDirectory());
     }
 
@@ -109,6 +118,8 @@ public final class RuStoreCrawlerCli {
         System.out.println("  --json-output=/path/file.json  Write/update JSON output using library persistence.");
         System.out.println("  --state-dir=/path/dir          Directory for state files. Default: state.");
         System.out.println("  --rerun-fails                  Retry only sources currently listed in fails state.");
+        System.out.println("  --rerun-developers=id1,id2     Force recrawl only selected developer IDs.");
+        System.out.println("  --rerun-direct-packages=p1,p2  Force recrawl only selected direct packages.");
         System.out.println("  --overwrite-all                Ignore existing output/state and rebuild from scratch.");
         System.out.println("  --developer-pages=N            Max pages per developer. 0 = all. Default: 0.");
         System.out.println("  --max-seed-developers=N        Limit number of seed developers. 0 = all. Default: 0.");
@@ -133,6 +144,8 @@ public final class RuStoreCrawlerCli {
             Path jsonOutputPath,
             Path stateDirectory,
             boolean rerunFails,
+            List<String> rerunDevelopers,
+            List<String> rerunDirectPackages,
             boolean overwriteAll,
             int maxDeveloperPages,
             int maxSeedDevelopers,
@@ -151,6 +164,8 @@ public final class RuStoreCrawlerCli {
             Path jsonOutputPath = null;
             Path stateDirectory = Path.of("state");
             boolean rerunFails = false;
+            List<String> rerunDevelopers = List.of();
+            List<String> rerunDirectPackages = List.of();
             boolean overwriteAll = false;
             int maxDeveloperPages = 0;
             int maxSeedDevelopers = 0;
@@ -172,6 +187,10 @@ public final class RuStoreCrawlerCli {
                     full = true;
                 } else if ("--rerun-fails".equals(arg)) {
                     rerunFails = true;
+                } else if (arg.startsWith("--rerun-developers=")) {
+                    rerunDevelopers = parseCsv(arg, "--rerun-developers=");
+                } else if (arg.startsWith("--rerun-direct-packages=")) {
+                    rerunDirectPackages = parseCsv(arg, "--rerun-direct-packages=");
                 } else if ("--overwrite-all".equals(arg)) {
                     overwriteAll = true;
                 } else if (arg.startsWith("--json-output=")) {
@@ -202,7 +221,8 @@ public final class RuStoreCrawlerCli {
             if (rerunFails && overwriteAll) {
                 throw new IllegalArgumentException("--rerun-fails and --overwrite-all cannot be used together");
             }
-            if ((rerunFails || overwriteAll) && jsonOutputPath == null) {
+            if ((rerunFails || overwriteAll || !rerunDevelopers.isEmpty() || !rerunDirectPackages.isEmpty())
+                    && jsonOutputPath == null) {
                 throw new IllegalArgumentException("--json-output is required for stateful runs");
             }
 
@@ -214,6 +234,8 @@ public final class RuStoreCrawlerCli {
                     jsonOutputPath,
                     stateDirectory,
                     rerunFails,
+                    rerunDevelopers,
+                    rerunDirectPackages,
                     overwriteAll,
                     maxDeveloperPages,
                     maxSeedDevelopers,
