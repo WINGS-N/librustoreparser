@@ -1,6 +1,7 @@
 package wings.v.rustore.parser;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,9 +39,21 @@ public final class RuStoreCrawlerCli {
             configBuilder.directPackages(options.directPackages());
         }
 
-        RuStoreCrawler crawler = new RuStoreCrawler(configBuilder.build());
-        CrawlResult result = crawl(crawler);
+        RuStoreCrawlerConfig config = configBuilder.build();
+        if (options.jsonOutputPath() != null) {
+            RuStoreCrawlerRunner runner = new RuStoreCrawlerRunner();
+            CrawlExecutionResult result = runWithPersistence(runner, config, options);
+            if (options.progress() || options.verbose()) {
+                System.err.println("[librustoreparser] json output: " + result.getOutputJsonPath());
+                System.err.println("[librustoreparser] fails state: " + result.getFailsJsonPath());
+                System.err.println("[librustoreparser] package count: " + result.getApps().size());
+                System.err.println("[librustoreparser] failure count: " + result.getFailures().size());
+            }
+            return;
+        }
 
+        RuStoreCrawler crawler = new RuStoreCrawler(config);
+        CrawlResult result = crawl(crawler);
         if (options.full()) {
             printFull(result);
         } else {
@@ -50,6 +63,20 @@ public final class RuStoreCrawlerCli {
 
     private static CrawlResult crawl(RuStoreCrawler crawler) throws IOException, InterruptedException {
         return crawler.crawl();
+    }
+
+    private static CrawlExecutionResult runWithPersistence(
+            RuStoreCrawlerRunner runner,
+            RuStoreCrawlerConfig config,
+            CliOptions options
+    ) throws IOException, InterruptedException {
+        if (options.overwriteAll()) {
+            return runner.overwriteAll(config, options.jsonOutputPath(), options.stateDirectory());
+        }
+        if (options.rerunFails()) {
+            return runner.rerunFails(config, options.jsonOutputPath(), options.stateDirectory());
+        }
+        return runner.runIncremental(config, options.jsonOutputPath(), options.stateDirectory());
     }
 
     private static void printPackages(CrawlResult result) {
@@ -79,6 +106,10 @@ public final class RuStoreCrawlerCli {
         System.out.println("  --progress                     Print concise crawl progress to stderr.");
         System.out.println("  --verbose                      Print crawler progress to stderr.");
         System.out.println("  --full                         Print package, app name, developer name, developer path.");
+        System.out.println("  --json-output=/path/file.json  Write/update JSON output using library persistence.");
+        System.out.println("  --state-dir=/path/dir          Directory for state files. Default: state.");
+        System.out.println("  --rerun-fails                  Retry only sources currently listed in fails state.");
+        System.out.println("  --overwrite-all                Ignore existing output/state and rebuild from scratch.");
         System.out.println("  --developer-pages=N            Max pages per developer. 0 = all. Default: 0.");
         System.out.println("  --max-seed-developers=N        Limit number of seed developers. 0 = all. Default: 0.");
         System.out.println("  --concurrency=N                Parallel developer crawls. Default: 3.");
@@ -91,6 +122,7 @@ public final class RuStoreCrawlerCli {
         System.out.println("Examples:");
         System.out.println("  ./gradlew -p external/librustoreparser runCrawlerCli --args='--max-seed-developers=1 --verbose'");
         System.out.println("  ./gradlew -p external/librustoreparser runCrawlerCli --args='--seed-developers=df91b73f --full'");
+        System.out.println("  ./gradlew -p external/librustoreparser runCrawlerCli --args='--json-output=out.json --state-dir=state --progress'");
     }
 
     private record CliOptions(
@@ -98,6 +130,10 @@ public final class RuStoreCrawlerCli {
             boolean progress,
             boolean verbose,
             boolean full,
+            Path jsonOutputPath,
+            Path stateDirectory,
+            boolean rerunFails,
+            boolean overwriteAll,
             int maxDeveloperPages,
             int maxSeedDevelopers,
             int concurrency,
@@ -112,6 +148,10 @@ public final class RuStoreCrawlerCli {
             boolean progress = false;
             boolean verbose = false;
             boolean full = false;
+            Path jsonOutputPath = null;
+            Path stateDirectory = Path.of("state");
+            boolean rerunFails = false;
+            boolean overwriteAll = false;
             int maxDeveloperPages = 0;
             int maxSeedDevelopers = 0;
             int concurrency = 3;
@@ -130,6 +170,14 @@ public final class RuStoreCrawlerCli {
                     verbose = true;
                 } else if ("--full".equals(arg)) {
                     full = true;
+                } else if ("--rerun-fails".equals(arg)) {
+                    rerunFails = true;
+                } else if ("--overwrite-all".equals(arg)) {
+                    overwriteAll = true;
+                } else if (arg.startsWith("--json-output=")) {
+                    jsonOutputPath = parsePath(arg, "--json-output=");
+                } else if (arg.startsWith("--state-dir=")) {
+                    stateDirectory = parsePath(arg, "--state-dir=");
                 } else if (arg.startsWith("--developer-pages=")) {
                     maxDeveloperPages = parseNonNegativeInt(arg, "--developer-pages=");
                 } else if (arg.startsWith("--max-seed-developers=")) {
@@ -151,11 +199,22 @@ public final class RuStoreCrawlerCli {
                 }
             }
 
+            if (rerunFails && overwriteAll) {
+                throw new IllegalArgumentException("--rerun-fails and --overwrite-all cannot be used together");
+            }
+            if ((rerunFails || overwriteAll) && jsonOutputPath == null) {
+                throw new IllegalArgumentException("--json-output is required for stateful runs");
+            }
+
             return new CliOptions(
                     help,
                     progress,
                     verbose,
                     full,
+                    jsonOutputPath,
+                    stateDirectory,
+                    rerunFails,
+                    overwriteAll,
                     maxDeveloperPages,
                     maxSeedDevelopers,
                     concurrency,
@@ -181,6 +240,14 @@ public final class RuStoreCrawlerCli {
                 throw new IllegalArgumentException(prefix + " value must be >= 0");
             }
             return value;
+        }
+
+        private static Path parsePath(String rawArg, String prefix) {
+            String rawValue = rawArg.substring(prefix.length()).trim();
+            if (rawValue.isEmpty()) {
+                throw new IllegalArgumentException("Path must not be blank for " + prefix);
+            }
+            return Path.of(rawValue);
         }
 
         private static int parseInt(String rawArg, String prefix) {

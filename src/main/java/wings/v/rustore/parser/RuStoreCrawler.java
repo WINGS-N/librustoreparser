@@ -46,20 +46,21 @@ public final class RuStoreCrawler {
         log("direct packages configured: " + directPackages.size());
         progress("direct packages: " + directPackages.size());
 
-        List<AppInfo> apps = collectDeveloperApps(developers);
-        if (apps.isEmpty()) {
-            throw new IOException("no apps collected from developer pages");
-        }
-
-        List<AppInfo> mergedApps = mergeDirectPackages(apps, directPackages);
+        DeveloperCollection developerCollection = collectDeveloperApps(developers);
+        DirectPackageCollection directPackageCollection = mergeDirectPackages(developerCollection.apps(), directPackages);
+        List<AppInfo> mergedApps = directPackageCollection.apps();
         sortApps(mergedApps, developers);
-        return new CrawlResult(mergedApps, freezeDevelopers(developers));
+        List<CrawlFailure> failures = new ArrayList<>(developerCollection.failures().size()
+                + directPackageCollection.failures().size());
+        failures.addAll(developerCollection.failures());
+        failures.addAll(directPackageCollection.failures());
+        return new CrawlResult(mergedApps, freezeDevelopers(developers), failures);
     }
 
-    private List<MutableDeveloperSeed> collectSeedDevelopers() throws IOException {
+    private List<MutableDeveloperSeed> collectSeedDevelopers() {
         List<String> ids = config.getSeedDeveloperIds();
         if (ids.isEmpty()) {
-            throw new IOException("no suspicious seed developers configured");
+            return new ArrayList<>();
         }
 
         Map<String, MutableDeveloperSeed> seedsById = new LinkedHashMap<>();
@@ -73,9 +74,6 @@ public final class RuStoreCrawler {
 
         List<MutableDeveloperSeed> seeds = new ArrayList<>(seedsById.values());
         seeds.sort(Comparator.comparing(MutableDeveloperSeed::id));
-        if (seeds.isEmpty()) {
-            throw new IOException("no suspicious seed developers configured");
-        }
         return seeds;
     }
 
@@ -90,7 +88,11 @@ public final class RuStoreCrawler {
         return new ArrayList<>(packages.values());
     }
 
-    private List<AppInfo> collectDeveloperApps(List<MutableDeveloperSeed> developers) throws InterruptedException {
+    private DeveloperCollection collectDeveloperApps(List<MutableDeveloperSeed> developers) throws InterruptedException {
+        if (developers.isEmpty()) {
+            return new DeveloperCollection(new ArrayList<>(), new ArrayList<>());
+        }
+
         ExecutorService executor = Executors.newFixedThreadPool(config.getConcurrency());
         ExecutorCompletionService<DeveloperCrawlResult> completionService =
                 new ExecutorCompletionService<>(executor);
@@ -107,6 +109,7 @@ public final class RuStoreCrawler {
             }
 
             Map<String, AppInfo> appsByPackage = new HashMap<>();
+            List<CrawlFailure> failures = new ArrayList<>();
             int completed = 0;
             int failed = 0;
             for (int i = 0; i < developers.size(); i++) {
@@ -126,6 +129,13 @@ public final class RuStoreCrawler {
                     log("skip developer crawl: " + (cause == null ? exception.getMessage() : cause.getMessage()));
                     completed++;
                     failed++;
+                    failures.add(new CrawlFailure(
+                            CrawlFailure.SourceType.DEVELOPER,
+                            null,
+                            null,
+                            currentDeveloper,
+                            cause == null ? exception.getMessage() : cause.getMessage()
+                    ));
                     progress("developers " + completed + "/" + developers.size()
                             + " | apps " + appsByPackage.size()
                             + " | failed " + failed
@@ -140,6 +150,7 @@ public final class RuStoreCrawler {
                     log("skip developer crawl: " + result.error().getMessage());
                     completed++;
                     failed++;
+                    failures.add(toDeveloperFailure(result.seed(), result.error()));
                     progress("developers " + completed + "/" + developers.size()
                             + " | apps " + appsByPackage.size()
                             + " | failed " + failed
@@ -170,19 +181,20 @@ public final class RuStoreCrawler {
                         + " | current " + currentDeveloper);
             }
 
-            return new ArrayList<>(appsByPackage.values());
+            return new DeveloperCollection(new ArrayList<>(appsByPackage.values()), failures);
         } finally {
             executor.shutdownNow();
         }
     }
 
-    private List<AppInfo> mergeDirectPackages(List<AppInfo> apps, List<String> packages)
-            throws IOException, InterruptedException {
+    private DirectPackageCollection mergeDirectPackages(List<AppInfo> apps, List<String> packages)
+            throws InterruptedException {
         if (packages.isEmpty()) {
-            return new ArrayList<>(apps);
+            return new DirectPackageCollection(new ArrayList<>(apps), new ArrayList<>());
         }
 
         Map<String, AppInfo> appsByPackage = new LinkedHashMap<>();
+        List<CrawlFailure> failures = new ArrayList<>();
         for (AppInfo app : apps) {
             appsByPackage.put(app.getPackageName(), app);
         }
@@ -193,26 +205,28 @@ public final class RuStoreCrawler {
                 continue;
             }
 
-            String appName = packageName;
-            String developerName = null;
-            String developerPath = null;
-
             try {
                 String body = fetch("/catalog/app/" + packageName);
-                appName = coalesce(HtmlParsers.extractPageH1(body), packageName);
-                developerName = HtmlParsers.extractAppCompanyName(body);
-                developerPath = HtmlParsers.extractAppDeveloperPath(body);
+                String appName = coalesce(HtmlParsers.extractPageH1(body), packageName);
+                String developerName = HtmlParsers.extractAppCompanyName(body);
+                String developerPath = HtmlParsers.extractAppDeveloperPath(body);
+                AppInfo app = new AppInfo(packageName, appName, developerName, developerPath);
+                appsByPackage.put(packageName, app);
+                log("direct package: " + app.getPackageName() + " | " + coalesce(app.getAppName(), packageName)
+                        + " | " + coalesce(app.getDeveloperName(), app.getDeveloperPath(), "direct-only"));
             } catch (IOException exception) {
                 log("direct package fetch failed: " + packageName + ": " + exception.getMessage());
+                failures.add(new CrawlFailure(
+                        CrawlFailure.SourceType.DIRECT_PACKAGE,
+                        packageName,
+                        "/catalog/app/" + packageName,
+                        packageName,
+                        exception.getMessage()
+                ));
             }
-
-            AppInfo app = new AppInfo(packageName, appName, developerName, developerPath);
-            appsByPackage.put(packageName, app);
-            log("direct package: " + app.getPackageName() + " | " + coalesce(app.getAppName(), packageName)
-                    + " | " + coalesce(app.getDeveloperName(), app.getDeveloperPath(), "direct-only"));
         }
 
-        return new ArrayList<>(appsByPackage.values());
+        return new DirectPackageCollection(new ArrayList<>(appsByPackage.values()), failures);
     }
 
     private DeveloperApps crawlDeveloper(String path) throws IOException, InterruptedException {
@@ -423,6 +437,16 @@ public final class RuStoreCrawler {
         );
     }
 
+    private static CrawlFailure toDeveloperFailure(MutableDeveloperSeed seed, IOException error) {
+        return new CrawlFailure(
+                CrawlFailure.SourceType.DEVELOPER,
+                seed == null ? null : seed.id(),
+                seed == null ? null : seed.path(),
+                seed == null ? null : developerLabel(seed),
+                error == null ? "unknown error" : error.getMessage()
+        );
+    }
+
     private static String coalesce(String... values) {
         for (String value : values) {
             if (value != null && !value.trim().isEmpty()) {
@@ -433,6 +457,12 @@ public final class RuStoreCrawler {
     }
 
     private record DeveloperApps(String path, String name, List<AppInfo> apps) {
+    }
+
+    private record DeveloperCollection(List<AppInfo> apps, List<CrawlFailure> failures) {
+    }
+
+    private record DirectPackageCollection(List<AppInfo> apps, List<CrawlFailure> failures) {
     }
 
     private record DeveloperCrawlResult(

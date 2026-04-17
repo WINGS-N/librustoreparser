@@ -40,6 +40,22 @@ public final class RuStoreCrawlerConfig {
         return new Builder();
     }
 
+    public Builder toBuilder() {
+        return new Builder()
+                .baseUrl(baseUrl)
+                .seedDeveloperIds(seedDeveloperIds)
+                .directPackages(directPackages)
+                .maxDeveloperPages(maxDeveloperPages)
+                .maxSeedDevelopers(maxSeedDevelopers)
+                .concurrency(concurrency)
+                .requestTimeout(requestTimeout)
+                .requestDelay(requestDelay)
+                .maxAttempts(maxAttempts)
+                .userAgent(userAgent)
+                .logger(logger)
+                .progressLogger(progressLogger);
+    }
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -182,8 +198,8 @@ public final class RuStoreCrawlerConfig {
         }
 
         public RuStoreCrawlerConfig build() {
-            if (seedDeveloperIds.isEmpty()) {
-                throw new IllegalArgumentException("seedDeveloperIds must not be empty");
+            if (seedDeveloperIds.isEmpty() && directPackages.isEmpty()) {
+                throw new IllegalArgumentException("seedDeveloperIds and directPackages must not both be empty");
             }
             return new RuStoreCrawlerConfig(this);
         }
